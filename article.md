@@ -781,6 +781,10 @@ sam delete
 
 ---
 
+## ソースコード
+
+https://github.com/TaichiFujii0326/put-event-poc
+
 ## 参考
 
 - [Amazon EventBridge とは - AWS ドキュメント](https://docs.aws.amazon.com/ja_jp/eventbridge/latest/userguide/eb-what-is.html)
