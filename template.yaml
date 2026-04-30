@@ -1,0 +1,105 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: EventBridge PutEvents POC (Go) - with SQS + DLQ
+
+Globals:
+  Function:
+    Runtime: provided.al2023
+    Architectures:
+      - arm64
+    Timeout: 10
+
+Resources:
+  # カスタムイベントバス
+  PocEventBus:
+    Type: AWS::Events::EventBus
+    Properties:
+      Name: poc-event-bus
+
+  # デッドレターキュー（処理失敗したメッセージの保管場所）
+  EventDLQ:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: poc-event-dlq
+
+  # メインキュー
+  EventQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: poc-event-queue
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt EventDLQ.Arn
+        maxReceiveCount: 3  # 3回失敗したらDLQへ
+
+  # EventBridgeがSQSにメッセージを送るためのポリシー
+  EventQueuePolicy:
+    Type: AWS::SQS::QueuePolicy
+    Properties:
+      Queues:
+        - !Ref EventQueue
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: events.amazonaws.com
+            Action: sqs:SendMessage
+            Resource: !GetAtt EventQueue.Arn
+            Condition:
+              ArnEquals:
+                aws:SourceArn: !GetAtt OrderEventRule.Arn
+
+  # EventBridgeルール（ターゲットをSQSに）
+  OrderEventRule:
+    Type: AWS::Events::Rule
+    Properties:
+      EventBusName: !Ref PocEventBus
+      EventPattern:
+        source:
+          - "poc.order"
+      Targets:
+        - Id: SQSTarget
+          Arn: !GetAtt EventQueue.Arn
+
+  # Lambda（SQSトリガー）
+  EventReceiverFunction:
+    Type: AWS::Serverless::Function
+    Metadata:
+      BuildMethod: makefile
+    Properties:
+      FunctionName: poc-event-receiver
+      CodeUri: .
+      Handler: bootstrap
+      Policies:
+        - SQSPollerPolicy:
+            QueueName: !GetAtt EventQueue.QueueName
+      Events:
+        SQSTrigger:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt EventQueue.Arn
+            BatchSize: 1
+
+  # PutEventsを呼ぶIAMポリシー（ローカルスクリプト用）
+  PutEventsPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: poc-put-events-policy
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Action: events:PutEvents
+            Resource: !GetAtt PocEventBus.Arn
+
+Outputs:
+  EventBusName:
+    Value: !Ref PocEventBus
+  EventBusArn:
+    Value: !GetAtt PocEventBus.Arn
+  EventQueueUrl:
+    Value: !Ref EventQueue
+  EventDLQUrl:
+    Value: !Ref EventDLQ
+  ReceiverFunctionName:
+    Value: !Ref EventReceiverFunction
