@@ -383,7 +383,10 @@ build-EventReceiverFunction:
 Detail: aws.String(detail) // コンパイルエラー
 
 // OK
-detailJSON, _ := json.Marshal(detail)
+detailJSON, err := json.Marshal(detail)
+if err != nil {
+    log.Fatalf("failed to marshal detail: %v", err)
+}
 Detail: aws.String(string(detailJSON))
 ```
 
