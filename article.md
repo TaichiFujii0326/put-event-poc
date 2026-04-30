@@ -773,14 +773,6 @@ EventBridge はルーティング、SQS はバッファ、Step Functions は順�
 
 ---
 
-## クリーンアップ
-
-```bash
-sam delete
-```
-
----
-
 ## ソースコード
 
 https://github.com/TaichiFujii0326/put-event-poc
