@@ -13,7 +13,7 @@ import (
 )
 
 const (
-	eventBusName = "poc-event-bus"
+	eventBusName = "poc-event-bus-sfn"
 	region       = "ap-northeast-1"
 )
 
