@@ -80,6 +80,8 @@ func main() {
 		log.Fatal("some entries failed")
 	}
 
-	fmt.Printf("Successfully sent %d event(s). EventID: %s\n",
-		len(input.Entries), *resp.Entries[0].EventId)
+	if len(resp.Entries) > 0 && resp.Entries[0].EventId != nil {
+		fmt.Printf("Successfully sent %d event(s). EventID: %s\n",
+			len(input.Entries), *resp.Entries[0].EventId)
+	}
 }
