@@ -156,7 +156,7 @@ type LineItem struct {
 	Quantity  int    `json:"quantity"`
 }
 
-func handler(ctx context.Context, event events.CloudWatchEvent) error {
+func handler(ctx context.Context, event events.EventBridgeEvent) error {
 	log.Printf("source: %s", event.Source)
 	log.Printf("detail-type: %s", event.DetailType)
 	log.Printf("detail (raw): %s", string(event.Detail))
@@ -178,10 +178,10 @@ func main() {
 
 ### ポイント解説
 
-**`events.CloudWatchEvent`** が EventBridge イベントの型です（歴史的経緯でこの名前になっています）。
+**`events.EventBridgeEvent`** が EventBridge イベントの型です（`aws-lambda-go` v1.36.0以降で追加された専用の型。旧来の `events.CloudWatchEvent` と構造は同じですが、意図が明確になります）。
 
 ```go
-type CloudWatchEvent struct {
+type EventBridgeEvent struct {
 	Version    string          `json:"version"`
 	ID         string          `json:"id"`
 	DetailType string          `json:"detail-type"`

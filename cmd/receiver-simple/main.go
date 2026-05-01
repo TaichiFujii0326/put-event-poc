@@ -21,7 +21,7 @@ type LineItem struct {
 	Quantity  int    `json:"quantity"`
 }
 
-func handler(ctx context.Context, ebEvent events.CloudWatchEvent) error {
+func handler(ctx context.Context, ebEvent events.EventBridgeEvent) error {
 	log.Printf("source: %s", ebEvent.Source)
 	log.Printf("detail-type: %s", ebEvent.DetailType)
 	log.Printf("detail (raw): %s", string(ebEvent.Detail))
