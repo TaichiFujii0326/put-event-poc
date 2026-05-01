@@ -1,0 +1,195 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: EventBridge + SQS + Lambda + Step Functions POC (Go)
+
+Globals:
+  Function:
+    Runtime: provided.al2023
+    Architectures:
+      - arm64
+    Timeout: 10
+
+Resources:
+  # カスタムイベントバス
+  PocEventBusSfn:
+    Type: AWS::Events::EventBus
+    Properties:
+      Name: poc-event-bus-sfn
+
+  # デッドレターキュー
+  EventDLQSfn:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: poc-event-dlq-sfn
+
+  # メインキュー
+  EventQueueSfn:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: poc-event-queue-sfn
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt EventDLQSfn.Arn
+        maxReceiveCount: 3
+
+  # EventBridgeがSQSにメッセージを送るためのポリシー
+  EventQueueSfnPolicy:
+    Type: AWS::SQS::QueuePolicy
+    Properties:
+      Queues:
+        - !Ref EventQueueSfn
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: events.amazonaws.com
+            Action: sqs:SendMessage
+            Resource: !GetAtt EventQueueSfn.Arn
+            Condition:
+              ArnEquals:
+                aws:SourceArn: !GetAtt OrderEventRuleSfn.Arn
+
+  # EventBridgeルール
+  OrderEventRuleSfn:
+    Type: AWS::Events::Rule
+    Properties:
+      EventBusName: !Ref PocEventBusSfn
+      EventPattern:
+        source:
+          - "poc.order"
+      Targets:
+        - Id: SQSTarget
+          Arn: !GetAtt EventQueueSfn.Arn
+
+  # Job1 Lambda（注文確認）
+  Job1Function:
+    Type: AWS::Serverless::Function
+    Metadata:
+      BuildMethod: makefile
+    Properties:
+      FunctionName: poc-sfn-job1
+      CodeUri: .
+      Handler: bootstrap
+
+  # Job2 Lambda（在庫引き当て）
+  Job2Function:
+    Type: AWS::Serverless::Function
+    Metadata:
+      BuildMethod: makefile
+    Properties:
+      FunctionName: poc-sfn-job2
+      CodeUri: .
+      Handler: bootstrap
+
+  # Step FunctionsがLambdaを呼ぶためのIAMロール
+  StateMachineRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: states.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: InvokeLambda
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: lambda:InvokeFunction
+                Resource:
+                  - !GetAtt Job1Function.Arn
+                  - !GetAtt Job2Function.Arn
+
+  # Step Functionsステートマシン（Job1 → Job2 の直列実行）
+  OrderStateMachine:
+    Type: AWS::StepFunctions::StateMachine
+    Properties:
+      StateMachineName: poc-order-state-machine
+      RoleArn: !GetAtt StateMachineRole.Arn
+      DefinitionString: !Sub |
+        {
+          "Comment": "Order processing workflow",
+          "StartAt": "Job1_OrderConfirmation",
+          "States": {
+            "Job1_OrderConfirmation": {
+              "Type": "Task",
+              "Resource": "${Job1Function.Arn}",
+              "Retry": [
+                {
+                  "ErrorEquals": ["Lambda.ServiceException", "Lambda.TooManyRequestsException"],
+                  "IntervalSeconds": 2,
+                  "MaxAttempts": 3,
+                  "BackoffRate": 2
+                }
+              ],
+              "Catch": [
+                {
+                  "ErrorEquals": ["States.ALL"],
+                  "Next": "JobFailed"
+                }
+              ],
+              "Next": "Job2_InventoryAllocation"
+            },
+            "Job2_InventoryAllocation": {
+              "Type": "Task",
+              "Resource": "${Job2Function.Arn}",
+              "Retry": [
+                {
+                  "ErrorEquals": ["Lambda.ServiceException", "Lambda.TooManyRequestsException"],
+                  "IntervalSeconds": 2,
+                  "MaxAttempts": 3,
+                  "BackoffRate": 2
+                }
+              ],
+              "Catch": [
+                {
+                  "ErrorEquals": ["States.ALL"],
+                  "Next": "JobFailed"
+                }
+              ],
+              "End": true
+            },
+            "JobFailed": {
+              "Type": "Fail",
+              "Error": "JobFailed",
+              "Cause": "A job in the workflow failed"
+            }
+          }
+        }
+
+  # SQSを受けてStep Functionsを起動するLambda
+  SfnStarterFunction:
+    Type: AWS::Serverless::Function
+    Metadata:
+      BuildMethod: makefile
+    Properties:
+      FunctionName: poc-sfn-starter
+      CodeUri: .
+      Handler: bootstrap
+      Environment:
+        Variables:
+          STATE_MACHINE_ARN: !Ref OrderStateMachine
+      Policies:
+        - SQSPollerPolicy:
+            QueueName: !GetAtt EventQueueSfn.QueueName
+        - StepFunctionsExecutionPolicy:
+            StateMachineName: !GetAtt OrderStateMachine.Name
+      Events:
+        SQSTrigger:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt EventQueueSfn.Arn
+            BatchSize: 1
+            FunctionResponseTypes:
+              - ReportBatchItemFailures
+
+Outputs:
+  EventBusName:
+    Value: !Ref PocEventBusSfn
+  StateMachineArn:
+    Value: !Ref OrderStateMachine
+  StarterFunctionName:
+    Value: !Ref SfnStarterFunction
