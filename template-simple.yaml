@@ -1,0 +1,56 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: EventBridge PutEvents POC (Go) - simple, EventBridge -> Lambda direct
+
+Globals:
+  Function:
+    Runtime: provided.al2023
+    Architectures:
+      - arm64
+    Timeout: 10
+
+Resources:
+  # カスタムイベントバス
+  PocEventBus:
+    Type: AWS::Events::EventBus
+    Properties:
+      Name: poc-event-bus-simple
+
+  # Lambda
+  EventReceiverSimpleFunction:
+    Type: AWS::Serverless::Function
+    Metadata:
+      BuildMethod: makefile
+    Properties:
+      FunctionName: poc-event-receiver-simple
+      CodeUri: .
+      Handler: bootstrap
+
+  # EventBridgeがLambdaを呼ぶためのパーミッション
+  EventReceiverSimplePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt EventReceiverSimpleFunction.Arn
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt OrderEventRule.Arn
+
+  # EventBridgeルール（ターゲットをLambdaに）
+  OrderEventRule:
+    Type: AWS::Events::Rule
+    Properties:
+      EventBusName: !Ref PocEventBus
+      EventPattern:
+        source:
+          - "poc.order"
+      Targets:
+        - Id: LambdaTarget
+          Arn: !GetAtt EventReceiverSimpleFunction.Arn
+
+Outputs:
+  EventBusName:
+    Value: !Ref PocEventBus
+  EventBusArn:
+    Value: !GetAtt PocEventBus.Arn
+  ReceiverFunctionName:
+    Value: !Ref EventReceiverSimpleFunction
